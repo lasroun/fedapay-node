@@ -4,11 +4,7 @@ import { FedaPay, Transaction, Webhook } from "fedapay";
 
 dotenv.config();
 
-/**
- * =========================
- * Config
- * =========================
- */
+// Config
 const FEDAPAY_KEY = process.env.FEDAPAY_KEY;
 const FEDAPAY_ENV = String(process.env.FEDAPAY_ENV || "sandbox").toLowerCase();
 const FEDAPAY_WEBHOOK_SECRET = process.env.FEDAPAY_WEBHOOK_SECRET;
@@ -28,11 +24,7 @@ if (!FEDAPAY_WEBHOOK_SECRET) {
 FedaPay.setApiKey(FEDAPAY_KEY);
 FedaPay.setEnvironment(FEDAPAY_ENV); // sandbox | live
 
-/**
- * =========================
- * Status (Collects)
- * =========================
- */
+// FedaPay API status values for transactions (collects)
 export const FEDAPAY_STATUS = Object.freeze({
   PENDING: "pending",
   APPROVED: "approved",
@@ -43,6 +35,7 @@ export const FEDAPAY_STATUS = Object.freeze({
   REFUNDED: "refunded",
 });
 
+// Internal normalized statuses (mapped from FedaPay)
 export const NORMALIZED_STATUS = Object.freeze({
   PENDING: "pending",
   PAID: "paid", // approved | transferred
@@ -53,7 +46,7 @@ export const NORMALIZED_STATUS = Object.freeze({
 });
 
 /**
- * FedaPay -> interne
+ * Maps a FedaPay status to internal normalized status.
  */
 export const toNormalizedStatus = (fedapayStatus) => {
   const s = (fedapayStatus || "").trim().toLowerCase();
@@ -83,11 +76,7 @@ export const toNormalizedStatus = (fedapayStatus) => {
   }
 };
 
-/**
- * =========================
- * Helpers
- * =========================
- */
+// Helpers
 const toAmountInt = (amount) => {
   const n = Number(amount);
   if (!Number.isFinite(n) || n <= 0) throw new Error("Montant invalide.");
@@ -110,11 +99,7 @@ const normalizeProvider = (provider) =>
     .trim()
     .toUpperCase();
 
-/**
- * Mode payment (FedaPay)
- * - sandbox => momo_test
- * - live =>  provider
- */
+// Payment mode: sandbox => momo_test, live => provider (mtn_open, moov, celtiis_benin)
 const getPaymentMode = (provider) => {
   if (FEDAPAY_ENV !== "live") return "momo_test";
 
@@ -126,11 +111,7 @@ const getPaymentMode = (provider) => {
   throw new Error("Provider invalide.");
 };
 
-/**
- * =========================
- * Functions
- * =========================
- */
+// Creates a FedaPay transaction (collect). Options: description?, amount, currencyIso?, customer (phone required).
 export const initCollect = async ({
   description = "descr - XXXXX",
   amount,
@@ -166,15 +147,20 @@ export const initCollect = async ({
   };
 };
 
+// Sends pay-now (Mobile Money link) for an existing transaction. Options: transactionId, phone, provider?, countryCode?
 export const payNow = async ({
   transactionId,
   provider,
   phone,
   countryCode = "bj",
 }) => {
-  if (!transactionId) throw new Error("transactionId requis.");
+  const txId = String(transactionId ?? "").trim();
+  if (!txId) throw new Error("transactionId requis.");
 
-  const transaction = await Transaction.retrieve(transactionId);
+  const phoneNumber = normalizePhone(phone);
+  const country = normalizeCountryCode(countryCode);
+
+  const transaction = await Transaction.retrieve(txId);
 
   const gen = await transaction.generateToken();
   const token = gen?.token;
@@ -183,17 +169,19 @@ export const payNow = async ({
   const mode = getPaymentMode(provider);
 
   await transaction.sendNowWithToken(mode, token, {
-    number: normalizePhone(phone),
-    country: normalizeCountryCode(countryCode),
+    number: phoneNumber,
+    country,
   });
 
-  return { ok: true, transactionId, mode };
+  return { ok: true, transactionId: txId, mode };
 };
 
+// Fetches a transaction by id. Options: transactionId.
 export const getTransaction = async ({ transactionId }) => {
-  if (!transactionId) throw new Error("transactionId requis.");
+  const txId = String(transactionId ?? "").trim();
+  if (!txId) throw new Error("transactionId requis.");
 
-  const tx = await Transaction.retrieve(transactionId);
+  const tx = await Transaction.retrieve(txId);
 
   if (!tx?.status) {
     throw new Error(
@@ -211,12 +199,14 @@ export const getTransaction = async ({ transactionId }) => {
   };
 };
 
-/**
- * Handler webhook FedaPay (minimal)
- */
+// Verifies signature and parses a FedaPay webhook event. req: rawBody or body, headers (x-fedapay-signature required).
 export const handleWebhook = async (req) => {
   const raw = req.rawBody || req.body;
-  if (!raw) throw new Error("raw body manquant");
+  const isEmpty =
+    !raw ||
+    (typeof raw === "string" && !raw.trim()) ||
+    (Buffer.isBuffer(raw) && raw.length === 0);
+  if (isEmpty) throw new Error("raw body manquant");
 
   const sig = String(req.headers["x-fedapay-signature"] || "").trim();
   if (!sig) throw new Error("Signature webhook manquante");
@@ -255,6 +245,7 @@ export const handleWebhook = async (req) => {
   };
 };
 
+// Module exports (initCollect, payNow, getTransaction, handleWebhook, status constants)
 export const fedapay = Object.freeze({
   initCollect,
   payNow,
